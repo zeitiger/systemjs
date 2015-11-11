@@ -836,14 +836,19 @@ function logloads(loads) {
       if (typeof obj != 'object')
         throw new TypeError('Expected object');
 
+      // we do this to be able to tell if a module is a module privately in ES5
+      // by doing m instanceof Module
       var m = new Module();
 
-      var pNames = [];
-      if (Object.getOwnPropertyNames && obj != null)
+      var pNames;
+      if (Object.getOwnPropertyNames && obj != null) {
         pNames = Object.getOwnPropertyNames(obj);
-      else
+      }
+      else {
+        pNames = [];
         for (var key in obj)
           pNames.push(key);
+      }
 
       for (var i = 0; i < pNames.length; i++) (function(key) {
         defineProperty(m, key, {
@@ -854,6 +859,9 @@ function logloads(loads) {
           }
         });
       })(pNames[i]);
+
+      if (Object.preventExtensions)
+        Object.preventExtensions(m);
 
       return m;
     },
@@ -950,7 +958,7 @@ function SystemLoader() {
 // NB no specification provided for System.paths, used ideas discussed in https://github.com/jorendorff/js-loaders/issues/25
 function applyPaths(paths, name) {
   // most specific (most number of slashes in path) match wins
-  var pathMatch = '', wildcard, maxWildcardPrefixLen = 0;
+  var pathMatch = '', wildcard, maxSlashCount = 0;
 
   // check to see if we have a paths entry
   for (var p in paths) {
@@ -967,11 +975,11 @@ function applyPaths(paths, name) {
     }
     // wildcard path match
     else {
-      var wildcardPrefixLen = pathParts[0].length;
-      if (wildcardPrefixLen >= maxWildcardPrefixLen &&
+      var slashCount = p.split('/').length;
+      if (slashCount >= maxSlashCount &&
           name.substr(0, pathParts[0].length) == pathParts[0] &&
           name.substr(name.length - pathParts[1].length) == pathParts[1]) {
-            maxWildcardPrefixLen = wildcardPrefixLen;
+            maxSlashCount = slashCount;
             pathMatch = p;
             wildcard = name.substr(pathParts[0].length, name.length - pathParts[1].length - pathParts[0].length);
           }
@@ -1228,9 +1236,15 @@ function getESModule(exports) {
   if (typeof exports == 'object' || typeof exports == 'function') {
     if (getOwnPropertyDescriptor) {
       var d;
-      for (var p in exports)
-        if (d = Object.getOwnPropertyDescriptor(exports, p))
-          defineProperty(esModule, p, d);
+      for (var p in exports) {
+        try {
+          if (d = Object.getOwnPropertyDescriptor(exports, p))
+            defineProperty(esModule, p, d);
+        } catch(e) {
+          // ignore this property because of restriction e.g. security
+          // DOMException: Failed to read the 'frame' property from 'Window'
+        }
+      }
     }
     else {
       var hasOwnProperty = exports && exports.hasOwnProperty;
@@ -1279,7 +1293,8 @@ function extendMeta(a, b, prepend) {
 function warn(msg) {
   if (this.warnings && typeof console != 'undefined' && console.warn)
     console.warn(msg);
-}// we define a __exec for globally-scoped execution
+}
+// we define a __exec for globally-scoped execution
 // used by module format implementations
 var __exec;
 
@@ -1860,7 +1875,7 @@ hook('normalize', function(normalize) {
  * Detailed Behaviours
  * - main can have a leading "./" can be added optionally
  * - map and defaultExtension are applied to the main
- * - defaultExtension adds the extension only if no other extension is present
+ * - defaultExtension adds the extension only if the exact extension is not present
  * - defaultJSExtensions applies after map when defaultExtension is not set
  * - if a modules value is available for a module, map and defaultExtension are skipped
  * - like global map, package map also applies to subpaths (sizzle/x, ./vendor/another/sub)
@@ -2949,7 +2964,7 @@ function createEntry() {
     if (exports && exports.__esModule)
       entry.esModule = exports;
     // set module as 'default' export, then fake named exports by iterating properties
-    else if (entry.esmExports)
+    else if (entry.esmExports && exports !== __global)
       entry.esModule = getESModule(exports);
     // just use the 'default' export
     else
@@ -3323,7 +3338,7 @@ hookConstructor(function(constructor) {
     var hasOwnProperty = Object.prototype.hasOwnProperty;
 
     // bare minimum ignores for IE8
-    var ignoredGlobalProps = ['_g', 'sessionStorage', 'localStorage', 'clipboardData', 'frames', 'external', 'mozAnimationStartTime', 'webkitStorageInfo', 'webkitIndexedDB'];
+    var ignoredGlobalProps = ['_g', 'sessionStorage', 'localStorage', 'clipboardData', 'frames', 'frameElement', 'external', 'mozAnimationStartTime', 'webkitStorageInfo', 'webkitIndexedDB'];
 
     var globalSnapshot;
 
